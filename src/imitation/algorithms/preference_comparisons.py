@@ -969,6 +969,7 @@ class PreferenceComparisons(base.BaseImitationAlgorithm):
         # the reward_trainer's model should refer to the same object as our copy
         assert self.reward_trainer.model is self.model
         self.trajectory_generator = trajectory_generator
+        self.trajectory_generator_num_steps = 0
         self.trajectory_generator.logger = self.logger
         self.fragmenter = fragmenter or RandomFragmenter(
             custom_logger=self.logger,
@@ -1083,14 +1084,15 @@ class PreferenceComparisons(base.BaseImitationAlgorithm):
             with self.logger.accumulate_means("agent"):
                 self.logger.log(f"Training agent for {num_steps} timesteps")
                 self.trajectory_generator.train(steps=num_steps)
+            self.trajectory_generator_num_steps += num_steps
 
             self.logger.dump(self._iteration)
 
             ########################
             # Additional Callbacks #
             ########################
-            if callback:
-                callback(self._iteration)
             self._iteration += 1
+            if callback:
+                callback(self._iteration, self.trajectory_generator_num_steps)
 
         return {"reward_loss": reward_loss, "reward_accuracy": reward_accuracy}

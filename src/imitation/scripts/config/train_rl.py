@@ -134,4 +134,4 @@ def seals_walker():
 def fast():
     # Intended for testing purposes: small # of updates, ends quickly.
     total_timesteps = int(4)
-    policy_save_interval = 2
+    policy_save_interval = 500

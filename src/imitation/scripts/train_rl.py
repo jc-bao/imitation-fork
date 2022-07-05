@@ -29,6 +29,7 @@ from imitation.scripts.config.train_rl import train_rl_ex
 @train_rl_ex.main
 def train_rl(
     *,
+    _config,
     total_timesteps: int,
     normalize_reward: bool,
     normalize_kwargs: dict,
@@ -92,6 +93,8 @@ def train_rl(
     venv = common.make_venv(
         post_wrappers=[lambda env, idx: wrappers.RolloutInfoWrapper(env)],
     )
+    eval_venv = common.make_venv(log_dir=None)
+
     callback_objs = []
     if reward_type is not None:
         reward_fn = load_reward(reward_type, reward_path, venv)
@@ -112,12 +115,26 @@ def train_rl(
             )
 
     if policy_save_interval > 0:
-        save_policy_callback = serialize.SavePolicyCallback(policy_dir)
+        save_policy_callback = serialize.SavePolicyCallback(
+            policy_dir,
+        )
         save_policy_callback = callbacks.EveryNTimesteps(
             policy_save_interval,
             save_policy_callback,
         )
         callback_objs.append(save_policy_callback)
+
+        if _config["common"]["videos"]:
+            save_video_callback = serialize.SaveVideoCallback(
+                policy_dir,
+                eval_venv,
+                video_kwargs=_config["common"]["video_kwargs"],
+            )
+            save_video_callback = callbacks.EveryNTimesteps(
+                policy_save_interval,
+                save_video_callback,
+            )
+        callback_objs.append(save_video_callback)
     callback = callbacks.CallbackList(callback_objs)
 
     if agent_path is None:
@@ -138,6 +155,12 @@ def train_rl(
     if policy_save_final:
         output_dir = os.path.join(policy_dir, "final")
         serialize.save_stable_model(output_dir, rl_algo)
+        serialize.record_n_save_video(
+            output_dir,
+            rl_algo,
+            eval_venv,
+            video_kwargs=_config["common"]["video_kwargs"],
+        )
 
     # Final evaluation of expert policy.
     return train.eval_policy(rl_algo, venv)

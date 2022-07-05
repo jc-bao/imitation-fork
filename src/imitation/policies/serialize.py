@@ -5,13 +5,15 @@
 
 import logging
 import os
+import os.path as osp
 import pathlib
-from typing import Callable, Type, TypeVar
+from typing import Callable, Type, TypeVar, Mapping, Any
 
 from stable_baselines3.common import base_class, callbacks, policies, vec_env
 
 from imitation.policies import base
-from imitation.util import registry
+from imitation.util import registry, video_wrapper
+from imitation.data import rollout
 
 Algorithm = TypeVar("Algorithm", bound=base_class.BaseAlgorithm)
 
@@ -141,6 +143,60 @@ def save_stable_model(
     os.makedirs(output_dir, exist_ok=True)
     model.save(os.path.join(output_dir, "model.zip"))
     logging.info("Saved policy to %s", output_dir)
+
+
+def record_n_save_video(
+    output_dir: str,
+    model: base_class.BaseAlgorithm,
+    eval_venv: vec_env.VecEnv,
+    video_kwargs: Mapping[str, Any],
+) -> None:
+    video_dir = osp.join(output_dir, "videos")
+    video_venv = video_wrapper.VideoWrapper(
+        eval_venv, directory=video_dir, **video_kwargs
+    )
+    sample_until = rollout.make_sample_until(min_timesteps=None, min_episodes=1)
+    rollout.generate_trajectories(model.policy, video_venv, sample_until)
+    assert "video.000000.mp4" in os.listdir(video_dir)
+    video_path = osp.join(video_dir, "video.000000.mp4")
+    model.logger.record("video", video_path)
+    model.logger.log(f"Recording and saving video to {video_path} ...")
+
+
+class SaveVideoCallback(callbacks.EventCallback):
+    """Saves the policy using `save_n_record_video` each time it is called.
+
+    Should be used in conjunction with `callbacks.EveryNTimesteps`
+    or another event-based trigger.
+    """
+
+    def __init__(
+        self,
+        policy_dir: str,
+        eval_venv: vec_env.VecEnv,
+        video_kwargs: Mapping[str, Any],
+        *args,
+        **kwargs,
+    ):
+        """Builds SavePolicyCallback.
+
+        Args:
+            policy_dir: Directory to save checkpoints.
+            eval_venv: Environment to evaluate the policy on.
+            video_kwargs: Keyword arguments to pass to `video_wrapper.VideoWrapper`.
+            *args: Passed through to `callbacks.EventCallback`.
+            **kwargs: Passed through to `callbacks.EventCallback`.
+        """
+        super().__init__(*args, **kwargs)
+        self.policy_dir = policy_dir
+        self.eval_venv = eval_venv
+        self.video_kwargs = video_kwargs
+
+    def _on_step(self) -> bool:
+        output_dir = os.path.join(self.policy_dir, f"{self.num_timesteps:012d}")
+        record_n_save_video(output_dir, self.model, self.eval_venv, self.video_kwargs)
+
+        return True
 
 
 class SavePolicyCallback(callbacks.EventCallback):

@@ -2,7 +2,8 @@
 
 import logging
 import os
-from typing import Any, Mapping, Sequence, Tuple, Union
+from typing import Any, Mapping, Optional, Sequence, Tuple, Union
+from stable_baselines3.common import base_class, policies, torch_layers, vec_env
 
 import sacred
 from stable_baselines3.common import vec_env
@@ -33,6 +34,10 @@ def config():
     parallel = True  # Use SubprocVecEnv rather than DummyVecEnv
     max_episode_steps = None  # Set to positive int to limit episode horizons
     env_make_kwargs = {}  # The kwargs passed to `spec.make`.
+
+    # Video config
+    videos = False  # save video files
+    video_kwargs = {}  # arguments to VideoWrapper
 
     locals()  # quieten flake8
 
@@ -131,7 +136,7 @@ def make_venv(
     env_name: str,
     num_vec: int,
     parallel: bool,
-    log_dir: str,
+    log_dir: Optional[str],
     max_episode_steps: int,
     env_make_kwargs: Mapping[str, Any],
     **kwargs,

@@ -5,11 +5,12 @@ can be called directly.
 """
 
 import os
+import os.path as osp
 from typing import Any, Mapping, Optional, Type, Union
 
 import torch as th
 from sacred.observers import FileStorageObserver
-from stable_baselines3.common import type_aliases
+from stable_baselines3.common import type_aliases, vec_env
 
 from imitation.algorithms import preference_comparisons
 from imitation.data import types
@@ -22,31 +23,33 @@ from imitation.scripts.config.train_preference_comparisons import (
 )
 
 
-def save_model(
-    agent_trainer: preference_comparisons.AgentTrainer,
-    save_path: str,
-):
-    """Save the model as model.pkl."""
-    serialize.save_stable_model(
-        output_dir=os.path.join(save_path, "policy"),
-        model=agent_trainer.algorithm,
-    )
-
-
 def save_checkpoint(
+    _config: Mapping[str, Any],
     trainer: preference_comparisons.PreferenceComparisons,
     save_path: str,
     allow_save_policy: Optional[bool],
+    eval_venv: vec_env.VecEnv,
 ):
     """Save reward model and optionally policy."""
     os.makedirs(save_path, exist_ok=True)
-    th.save(trainer.reward_trainer.model, os.path.join(save_path, "reward_net.pt"))
+    th.save(trainer.reward_trainer.model, osp.join(save_path, "reward_net.pt"))
     if allow_save_policy:
         # Note: We should only save the model as model.pkl if `trajectory_generator`
         # contains one. Specifically we check if the `trajectory_generator` contains an
         # `algorithm` attribute.
         assert hasattr(trainer.trajectory_generator, "algorithm")
-        save_model(trainer.trajectory_generator, save_path)
+        policy_path = osp.join(save_path, "policy")
+        serialize.save_stable_model(
+            output_dir=policy_path,
+            model=trainer.trajectory_generator.algorithm,
+        )
+        if _config["common"]["videos"]:
+            serialize.record_n_save_video(
+                output_dir=policy_path,
+                model=trainer.trajectory_generator.algorithm,
+                eval_venv=eval_venv,
+                video_kwargs=_config["common"]["video_kwargs"],
+            )
     else:
         trainer.logger.warn(
             "trainer.trajectory_generator doesn't contain a policy to save.",
@@ -56,6 +59,7 @@ def save_checkpoint(
 @train_preference_comparisons_ex.main
 def train_preference_comparisons(
     _seed: int,
+    _config: Mapping[str, Any],
     total_timesteps: int,
     total_comparisons: int,
     num_iterations: int,
@@ -137,6 +141,7 @@ def train_preference_comparisons(
     """
     custom_logger, log_dir = common.setup_logging()
     venv = common.make_venv()
+    eval_venv = common.make_venv(log_dir=None)
 
     reward_net = reward.make_reward_net(venv)
     if agent_path is None:
@@ -203,12 +208,18 @@ def train_preference_comparisons(
         query_schedule=query_schedule,
     )
 
-    def save_callback(iteration_num):
+    def save_callback(iteration_num, trajectory_generator_num_steps):
         if checkpoint_interval > 0 and iteration_num % checkpoint_interval == 0:
             save_checkpoint(
+                _config,
                 trainer=main_trainer,
-                save_path=os.path.join(log_dir, "checkpoints", f"{iteration_num:04d}"),
+                save_path=osp.join(
+                    log_dir,
+                    "checkpoints",
+                    f"iter_{iteration_num:04d}_step_{trajectory_generator_num_steps:08d}",
+                ),
                 allow_save_policy=bool(trajectory_path is None),
+                eval_venv=eval_venv,
             )
 
     results = main_trainer.train(
@@ -218,13 +229,14 @@ def train_preference_comparisons(
     )
 
     if save_preferences:
-        main_trainer.dataset.save(os.path.join(log_dir, "preferences.pkl"))
+        main_trainer.dataset.save(osp.join(log_dir, "preferences.pkl"))
 
     # Save final artifacts.
     if checkpoint_interval >= 0:
         save_checkpoint(
+            _config,
             trainer=main_trainer,
-            save_path=os.path.join(log_dir, "checkpoints", "final"),
+            save_path=osp.join(log_dir, "checkpoints", "final"),
             allow_save_policy=bool(trajectory_path is None),
         )
 
@@ -238,7 +250,7 @@ def train_preference_comparisons(
 
 def main_console():
     observer = FileStorageObserver(
-        os.path.join("output", "sacred", "train_preference_comparisons"),
+        osp.join("output", "sacred", "train_preference_comparisons"),
     )
     train_preference_comparisons_ex.observers.append(observer)
     train_preference_comparisons_ex.run_commandline()
